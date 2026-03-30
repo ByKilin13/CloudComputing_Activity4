@@ -1,0 +1,165 @@
+version: "3.7"
+
+services:
+  carlemany-backend:
+    build:
+      context: .
+      target: carlemany-backend-base
+    env_file:
+      - .env
+    depends_on:
+      - postgres
+      - redis
+      - minio
+      - minio-server
+    volumes:
+      - type: bind
+        source: .
+        target: /carlemany-backend
+    ports:
+      - "8000:80"
+    networks:
+      - carlemany-net
+
+  redis:
+    image: redis:7.2.4
+    hostname: redis-cache
+    container_name: redis-cache
+    restart: on-failure
+    command: redis-server
+    environment:
+      - ALLOW_EMPTY_PASSWORD=yes
+    ports:
+      - "6379:6379"
+    networks:
+      - carlemany-net
+
+  minio-server:
+    image: quay.io/minio/minio:RELEASE.2023-11-01T01-57-10Z
+    command: minio server /data --console-address ":9090"
+    ports:
+      - "9000:9000"
+      - "9090:9090"
+    environment:
+      - MINIO_ROOT_USER=minio
+      - MINIO_ROOT_PASSWORD=minio123
+    restart: always
+    networks:
+      - carlemany-net
+
+  minio:
+    image: minio/mc
+    depends_on:
+      - minio-server
+    entrypoint: >
+      /bin/sh -c "
+      /usr/bin/mc alias set myminio http://minio-server:9000 minio minio123;
+      /usr/bin/mc mb myminio/backend-carlemany-s3-bucket;
+      /usr/bin/mc anonymous set download myminio/backend-carlemany-s3-bucket;
+      /usr/bin/mc policy set public myminio/backend-carlemany-s3-bucket;
+      exit 0;
+      "
+    networks:
+      - carlemany-net
+
+  postgres:
+    image: postgres:13.4-alpine3.14
+    environment:
+      - POSTGRES_DB=${PSQL_DB_DATABASE}
+      - POSTGRES_USER=${PSQL_DB_USERNAME}
+      - POSTGRES_PASSWORD=${PSQL_DB_PASSWORD}
+    env_file:
+     - .env
+    volumes:
+      - type: volume
+        source: carlemany-backend-data
+        target: /var/lib/postgresql/data
+    healthcheck:
+      test: pg_isready -d ${PSQL_DB_DATABASE} -U ${PSQL_DB_USERNAME}
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    ports:
+      - "5432:5432"
+    networks:
+      - carlemany-net
+
+  make_migrations:
+    build:
+      context: .
+      target: carlemany-backend-base
+    env_file:
+      - .env
+    volumes:
+      - type: bind
+        source: .
+        target: /carlemany-backend
+    networks:
+      - carlemany-net
+    depends_on:
+      - postgres
+    entrypoint: aerich migrate
+
+  migrate:
+    build:
+      context: .
+      target: carlemany-backend-base
+    env_file:
+      - .env
+    volumes:
+      - type: bind
+        source: .
+        target: /carlemany-backend
+    networks:
+      - carlemany-net
+    depends_on:
+      - postgres
+    entrypoint: aerich upgrade
+
+  init_db:
+    build:
+      context: .
+      target: carlemany-backend-base
+    env_file:
+      - .env
+    volumes:
+      - type: bind
+        source: .
+        target: /carlemany-backend
+    networks:
+      - carlemany-net
+    depends_on:
+      - postgres
+    entrypoint: sh infra/init_db.sh
+
+  black:
+    image: carlemany-backend-base:latest
+    volumes:
+      - type: bind
+        source: ./
+        target: /carlemany-backend
+        read_only: true
+    entrypoint: sh -c "black --config .black --check --diff ."
+
+  test: &test
+    image: carlemany-backend-dev:latest
+    env_file:
+     - .env
+    volumes:
+      - type: bind
+        source: ./
+        target: /carlemany-backend
+    networks:
+      - carlemany-net
+    entrypoint: pytest --maxfail=10
+
+  test-cov:
+    <<: *test
+    entrypoint: pytest --maxfail=10 --cov --cov-report=term --cov-report=html --junitxml=tests/test-results/junit.xml
+
+
+networks:
+  carlemany-net:
+
+volumes:
+  carlemany-backend-data:

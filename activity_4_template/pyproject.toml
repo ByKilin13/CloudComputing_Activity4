@@ -1,0 +1,18 @@
+[tool.ruff]
+line-length = 100
+
+# Enable Pyflakes `E` and `F` codes by default.
+extend-select = [
+    # Pyflakes
+    "F",
+    # Pycodestyle
+    "E",
+    "W",
+    # isort
+    "I",
+]
+ignore = ["E501"]
+[tool.aerich]
+tortoise_orm = "app.database.TORTOISE_ORM"
+location = "./migrations"
+src_folder = "./."
